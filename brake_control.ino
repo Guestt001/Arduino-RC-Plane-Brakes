@@ -1,26 +1,31 @@
 /*
  * СИСТЕМА УПРАВЛЕНИЯ ЭЛЕКТРОМАГНИТАМИ С PWM-ПЕРЕКЛЮЧЕНИЕМ
- * Версия: 7.0 (Оптимизированная, без реверса магнитов)
- * Логика: 4 быстрых включения/выключения за 2 секунды меняют уровень
+ * Версия: 7.1 (Обновленные параметры)
+ * Изменения:
+ * - Максимальное напряжение: 10В вместо 12В
+ * - Минимальное напряжение: 3В вместо 2В
+ * - 4 уровня вместо 5
+ * - 2 переключения вместо 4 для смены уровня
+ * - Питание: 10В
  */
 
 // ==================== КОНФИГУРАЦИЯ ====================
 
-// 1. ПИНЫ ПОДКЛЮЧЕНИЯ (Одноканальное управление)
+// 1. ПИНЫ ПОДКЛЮЧЕНИЯ
 const byte INPUT_PIN = 2;         // PWM сигнал с ресивера
 const byte LEFT_MAGNET_PIN = 5;   // Левый магнит (PWM управление)
 const byte RIGHT_MAGNET_PIN = 9;  // Правый магнит (PWM управление)
 const byte INDICATOR_PIN = 3;     // Индикаторный светодиод
 
-// 2. ДИАПАЗОНЫ ВХОДНОГО PWM (настройте под ваш передатчик)
+// 2. ДИАПАЗОНЫ ВХОДНОГО PWM
 const int BRAKE_MIN = 1200;      // Начало тормозного режима
 const int BRAKE_MAX = 1400;      // Конец тормозного режима
 const int WORK_MIN = 1500;       // Начало рабочего режима
 const int NEUTRAL = 1750;        // Нейтральное положение
 const int DEAD_ZONE = 50;        // Мертвая зона вокруг нейтрали
 
-// 3. ПАРАМЕТРЫ ПЕРЕКЛЮЧЕНИЯ УРОВНЕЙ
-const byte PATTERN_CYCLES = 4;           // Циклов для смены уровня
+// 3. ПАРАМЕТРЫ ПЕРЕКЛЮЧЕНИЯ УРОВНЕЙ (ИЗМЕНЕНО)
+const byte PATTERN_CYCLES = 2;           // Циклов для смены уровня (было 4)
 const unsigned int PATTERN_TIME = 2000;  // Окно детектирования (мс)
 const unsigned int CYCLE_MAX = 800;      // Макс. длительность цикла (мс)
 const unsigned int CYCLE_MIN_PAUSE = 100; // Мин. пауза между циклами (мс)
@@ -32,20 +37,19 @@ const unsigned int PHASE1_TIME = 2000;   // Длительность фазы 1 
 const unsigned long MAX_OP_TIME = 12000; // Макс. время работы (мс)
 const int PULSE_INTERVAL = 100;  // Интервал пульсации (мс)
 
-// 5. УРОВНИ НАПРЯЖЕНИЯ (5 уровней)
-const byte VOL_LEVELS = 5;
+// 5. УРОВНИ НАПРЯЖЕНИЯ (ИЗМЕНЕНО: 4 уровня, макс 10В, мин 3В)
+const byte VOL_LEVELS = 4;  // Было 5, теперь 4
 const float VOLTAGES[VOL_LEVELS][3] = {
   // Фаза1_мин, Фаза1_макс, Фаза2
-  {6.0, 12.0, 12.0}, // Уровень 0 (максимум)
-  {5.0, 11.0, 11.0}, // Уровень 1
-  {4.0, 10.0, 10.0}, // Уровень 2
-  {3.0, 9.0, 9.0},   // Уровень 3
-  {2.0, 8.0, 8.0}    // Уровень 4 (минимум)
+  {3.0, 10.0, 10.0}, // Уровень 0 (максимум: 3В→10В→10В)
+  {3.0, 9.0, 9.0},   // Уровень 1 (3В→9В→9В)
+  {3.0, 8.0, 8.0},   // Уровень 2 (3В→8В→8В)
+  {3.0, 7.0, 7.0}    // Уровень 3 (минимум: 3В→7В→7В)
 };
 
-// 6. СИСТЕМНЫЕ КОНСТАНТЫ
-const float BRAKE_VOLTAGE = 6.0;     // Напряжение в тормозном режиме
-const float SUPPLY_VOLTAGE = 12.0;   // Питание системы
+// 6. СИСТЕМНЫЕ КОНСТАНТЫ (ИЗМЕНЕНО)
+const float BRAKE_VOLTAGE = 6.0;     // Напряжение в тормозном режиме (можно оставить 6В)
+const float SUPPLY_VOLTAGE = 10.0;   // Питание системы (было 12В)
 const byte LED_BRIGHTNESS = 128;     // Яркость светодиода
 
 // ==================== СИСТЕМНЫЕ ПЕРЕМЕННЫЕ ====================
@@ -104,13 +108,13 @@ inline float getMinVoltage() { return VOLTAGES[state.voltageLevel][0]; }
 inline float getMaxVoltage() { return VOLTAGES[state.voltageLevel][1]; }
 inline float getPhase2Voltage() { return VOLTAGES[state.voltageLevel][2]; }
 
-// Конвертация напряжения в ШИМ (0-255)
+// Конвертация напряжения в ШИМ (0-255) с учетом 10В питания
 inline byte voltToPWM(float volt) {
   volt = constrain(volt, 0.0, SUPPLY_VOLTAGE);
   return (byte)((volt / SUPPLY_VOLTAGE) * 255.0);
 }
 
-// Управление магнитами (только включение/выключение)
+// Управление магнитами
 inline void setMagnet(byte pin, float voltage) {
   analogWrite(pin, voltToPWM(voltage));
 }
@@ -124,7 +128,7 @@ inline void offAll() {
   offMagnet(RIGHT_MAGNET_PIN);
 }
 
-// Детектирование паттерна для смены уровня
+// Детектирование паттерна для смены уровня (2 цикла вместо 4)
 void checkPattern(bool currentlyOn) {
   unsigned long now = millis();
   
@@ -181,7 +185,7 @@ void checkPattern(bool currentlyOn) {
         pattern.active = false;
         pattern.cycleCount = 0;
       } else if (pattern.cycleCount >= PATTERN_CYCLES) {
-        // Паттерн обнаружен - меняем уровень
+        // Паттерн обнаружен - меняем уровень (2 цикла достаточно)
         changeLevel();
         pattern.cooling = true;
         pattern.coolStart = now;
@@ -203,14 +207,14 @@ void checkPattern(bool currentlyOn) {
 
 // Смена уровня напряжения
 void changeLevel() {
-  state.voltageLevel = (state.voltageLevel + 1) % VOL_LEVELS;
+  state.voltageLevel = (state.voltageLevel + 1) % VOL_LEVELS; // Цикл 0-3
   state.showingLevel = true;
   state.levelShowStart = millis();
   state.isBlocked = true;
   offAll();
 }
 
-// Индикация уровня напряжения
+// Индикация уровня напряжения (адаптирована для 4 уровней)
 void showLevel() {
   if (!state.showingLevel) return;
   
@@ -224,16 +228,17 @@ void showLevel() {
     return;
   }
   
-  // Первая секунда - мигания
+  // Первая секунда - мигания (1-4 для уровней 0-3)
   if (elapsed < 1000) {
-    byte blinks = state.voltageLevel + 1;
+    byte blinks = state.voltageLevel + 1; // 1-4 миганий
     byte phase = (elapsed / 200) % (blinks * 2);
     analogWrite(INDICATOR_PIN, (phase < blinks) ? LED_BRIGHTNESS : 0);
   } 
   // Следующие 2 секунды - постоянный свет с яркостью уровня
   else {
+    // 4 уровня: 100%, 75%, 50%, 25% яркости
     byte brightness = map(state.voltageLevel, 0, VOL_LEVELS-1, 
-                         LED_BRIGHTNESS, LED_BRIGHTNESS/5);
+                         LED_BRIGHTNESS, LED_BRIGHTNESS/4);
     analogWrite(INDICATOR_PIN, brightness);
   }
 }
